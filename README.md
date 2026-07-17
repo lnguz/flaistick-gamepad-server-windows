@@ -1,6 +1,6 @@
 # FlaiStick — Windows Server
 
-A background .NET 8 tray application that receives gamepad input streamed over UDP from the [AndroidClient](../AndroidClient/README.md) app and exposes each physical controller as a virtual Xbox 360 controller via [ViGEmBus](https://github.com/ViGEm/ViGEmBus), so any game or app that supports XInput sees a real gamepad.
+A background .NET 8 tray application that receives gamepad input streamed over UDP from the [flaistick-app](../flaistick-app/README.md) Android app and exposes each physical controller as a virtual Xbox 360 controller via [ViGEmBus](https://github.com/ViGEm/ViGEmBus), so any game or app that supports XInput sees a real gamepad.
 
 ## Requirements
 
@@ -16,12 +16,12 @@ A background .NET 8 tray application that receives gamepad input streamed over U
 ## Project layout
 
 ```
-WindowsServer/
+flaistick-gamepad-server-windows/
   Program.cs               Entry point: process priority, ViGEmBus check, tray + server wiring
   TrayApp.cs                 System tray icon (NotifyIcon) + Exit menu
   VigemCheck.cs               Checks whether the ViGEmBus driver is installed
   UdpServer.cs               UDP receive loop, routes packets by length
-  DiscoveryServer.cs           Answers LAN broadcast discovery requests from the app
+  DiscoveryServer.cs           Answers LAN broadcast/unicast discovery requests, reports hostname + MAC
   PacketParser.cs             Applies a 12-byte state packet to a virtual controller
   ReorderPacket.cs             Parses the player-reorder command
   ControllerHub.cs            Owns the ViGEmClient + per-device virtual controllers
@@ -99,7 +99,7 @@ Output: `dist\FlaiStickGamepadServerSetup.exe` — copy this single file to any 
 ## How it works
 
 - `Program.cs` raises its own process priority, checks for ViGEmBus, starts the UDP server and the discovery server on background tasks, and runs a Windows Forms message loop (`Application.Run`) on the main (STA) thread purely to host the tray icon — there is no visible window.
-- `DiscoveryServer` listens on a dedicated UDP port (`47998`) for a 4-byte broadcast request from the app, and replies directly to the sender with the PC's hostname and the gamepad-data port, so the phone can list and connect without ever needing a manually-typed IP.
+- `DiscoveryServer` listens on a dedicated UDP port (`47998`) for a 4-byte request (sent as either a broadcast scan or a direct unicast "are you awake" ping from the app), and replies directly to the sender with the PC's hostname, the gamepad-data port, and the MAC address of its active network adapter — the phone caches all of it, so it never needs a manually-typed IP and can send a Wake-on-LAN packet later if this PC stops responding.
 - `UdpServer` binds a single UDP socket and distinguishes packet types purely by length: an exact **12 bytes** is a gamepad state update, while `2 + 4×N` bytes (starting with opcode `0xAA`) is a player-reorder command listing `N` device IDs.
 - `ControllerHub` maintains one `IXbox360Controller` per Android device ID, created lazily on first packet and disposed automatically if no packet arrives for **3 seconds** (a background sweep runs every 2 seconds). The Android client sends a heartbeat every 200 ms specifically to avoid tripping this timeout during normal play.
 - `PacketParser` maps the 12-byte packet directly onto `IXbox360Controller` button/axis/slider state using the standard XInput button bitmask.
@@ -109,12 +109,22 @@ Output: `dist\FlaiStickGamepadServerSetup.exe` — copy this single file to any 
 
 ## Wire protocol
 
-See the [AndroidClient README](../AndroidClient/README.md#wire-protocol) for the full packet layouts (gamepad state and player-order command) — both sides must stay in sync if the protocol changes.
+See the [flaistick-app README](../flaistick-app/README.md#wire-protocol) for the full packet layouts (gamepad state, player-order command, discovery, and Wake-on-LAN) — both sides must stay in sync if the protocol changes.
+
+## Enabling Wake-on-LAN on this PC
+
+The app can send a Wake-on-LAN magic packet to wake this PC if it doesn't respond to a connection attempt, but the PC's network adapter has to be configured to accept it first:
+
+1. **Device Manager** → Network adapters → (your Ethernet/Wi-Fi adapter) → Properties → **Power Management** tab → check "Allow this device to wake the computer" (and ideally "Only allow a magic packet to wake the computer").
+2. **Advanced** tab → set "Wake on Magic Packet" (or similarly named property) to **Enabled**.
+3. In the PC's **BIOS/UEFI**, enable "Wake on LAN" / "Power On by PCI-E" (naming varies by motherboard vendor) if the option exists — required for waking from a fully powered-off (S5) state; not needed if you only sleep (S3) the PC.
+4. Wi-Fi-based WOL is unreliable on most consumer hardware/drivers — a wired Ethernet connection is strongly recommended for this feature to work consistently.
 
 ## Troubleshooting
 
 - **PC doesn't show up in the app's list**: confirm both firewall rules exist (9000 and 47998), that the phone and PC are on the same Wi-Fi network, and that the network doesn't have AP/Client Isolation enabled (common on guest networks — it blocks broadcast traffic between devices).
 - **Controller shows in the app but nothing happens in Windows**: check the firewall rule for port 9000 and that the phone actually selected the right PC from the list.
 - **Controller connects then disappears after a few seconds**: this means packets stopped arriving — check Wi-Fi stability; the 200 ms client heartbeat should otherwise prevent this during normal use.
+- **Wake-on-LAN doesn't wake the PC**: verify the adapter/BIOS settings above, and prefer a wired connection — this is a hardware/driver limitation, not something the app can work around.
 - **ViGEmBus warning on startup**: install it with `winget install ViGEm.ViGEmBus`, then relaunch the app.
 - **File lock errors when rebuilding (`R.jar`/`app/build` in use)**: this is a Kotlin/Gradle language-server issue on the Android side, not this project — see the note in the Android client's build if you hit it there. On this project, stop any lingering `dotnet`/`GamepadServer` processes before rebuilding if `bin`/`obj` are locked.

@@ -17,18 +17,23 @@ internal static class Program
 
         StartupRegistration.Register(AppName);
 
-        if (!VigemCheck.IsDriverInstalled())
+        ControllerHub hub;
+        try
+        {
+            hub = new ControllerHub();
+        }
+        catch (Exception ex)
         {
             MessageBox.Show(
-                "ViGEmBus was not found on this PC. Virtual controllers won't work until it's installed.\n\n" +
-                "Install it with: winget install ViGEm.ViGEmBus\n" +
-                "or from https://github.com/ViGEm/ViGEmBus/releases",
+                "Failed to initialize ViGEmBus. Make sure it's installed (winget install ViGEm.ViGEmBus) " +
+                "and that you've restarted this PC after installing it.\n\n" +
+                $"Details: {ex.Message}",
                 "FlaiStick Gamepad Server",
                 MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
+                MessageBoxIcon.Error);
+            return;
         }
 
-        var hub = new ControllerHub();
         var cts = new CancellationTokenSource();
         var server = new UdpServer(Port, hub);
         var discovery = new DiscoveryServer(DiscoveryPort, Port);

@@ -1,4 +1,6 @@
+using System.Linq;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 
@@ -8,6 +10,7 @@ sealed class DiscoveryServer(int discoveryPort, int gamePort)
 {
     private static readonly byte[] RequestMagic = { 0x46, 0x4C, 0x53, 0x44 };  // "FLSD"
     private static readonly byte[] ResponseMagic = { 0x46, 0x4C, 0x53, 0x52 }; // "FLSR"
+    private static readonly byte[] LocalMacAddress = GetLocalMacAddress();
 
     public async Task RunAsync(CancellationToken ct)
     {
@@ -35,14 +38,25 @@ sealed class DiscoveryServer(int discoveryPort, int gamePort)
 
             var hostname = Environment.MachineName;
             var nameBytes = Encoding.UTF8.GetBytes(hostname);
-            var response = new byte[4 + 2 + 1 + nameBytes.Length];
+            var response = new byte[4 + 2 + 6 + 1 + nameBytes.Length];
             ResponseMagic.CopyTo(response, 0);
             BitConverter.GetBytes((ushort)gamePort).CopyTo(response, 4);
-            response[6] = (byte)nameBytes.Length;
-            nameBytes.CopyTo(response, 7);
+            LocalMacAddress.CopyTo(response, 6);
+            response[12] = (byte)nameBytes.Length;
+            nameBytes.CopyTo(response, 13);
 
             await socket.SendToAsync(response, SocketFlags.None, result.RemoteEndPoint, ct);
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] discovery request from {result.RemoteEndPoint}, replied as '{hostname}'");
         }
+    }
+
+    private static byte[] GetLocalMacAddress()
+    {
+        var mac = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(ni => ni.OperationalStatus == OperationalStatus.Up
+                      && ni.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+            .Select(ni => ni.GetPhysicalAddress().GetAddressBytes())
+            .FirstOrDefault(bytes => bytes.Length == 6);
+        return mac ?? new byte[6];
     }
 }
