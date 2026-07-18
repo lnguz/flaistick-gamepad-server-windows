@@ -28,6 +28,18 @@ sealed class ControllerHub : IDisposable
                 pad.FeedbackReceived += (_, e) => RumbleReceived?.Invoke(deviceId, e.LargeMotor, e.SmallMotor);
                 pad.Connect();
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] virtual Xbox 360 controller connected for device {deviceId}");
+                Task.Run(async () =>
+                {
+                    await Task.Delay(500);
+                    try
+                    {
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] device {deviceId} assigned XInput player slot {pad.UserIndex + 1}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] device {deviceId} player slot not yet reported by Windows ({ex.GetType().Name})");
+                    }
+                });
                 return (pad, now);
             },
             (_, existing) => (existing.Pad, now));

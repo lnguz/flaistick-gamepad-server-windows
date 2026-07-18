@@ -12,6 +12,8 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        Logging.Init();
+
         try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.AboveNormal; }
         catch { /* best effort */ }
 

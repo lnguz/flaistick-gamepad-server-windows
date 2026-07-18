@@ -53,13 +53,14 @@ dotnet build
 dotnet run
 ```
 
-When run from an existing terminal with `dotnet run`, diagnostic lines are printed showing:
+The app is built as a GUI-subsystem (`WinExe`) executable, so it never actually has a terminal attached — not even under `dotnet run`. Diagnostic lines are still generated, but `Logging.Init()` mirrors `Console.Out` to a file at `%LOCALAPPDATA%\FlaiStick\server.log` (recreated fresh on every launch) so they're actually readable. It shows:
 - when the UDP listener starts,
 - roughly every 200th packet received per device (proof that input is arriving),
-- when a virtual controller connects or times out,
-- when a player-reorder request is processed.
+- when a virtual controller connects or times out, and which XInput player slot (1-4) Windows assigned it,
+- when a player-reorder request is processed,
+- when a game sets rumble/force-feedback on a virtual controller (logged only when the motor values change, to avoid spam).
 
-There is no other logging — this is intentional, since the shipped behavior is a silent background tray app. In particular, mouse/keyboard/text packets are not logged at all (they'd be far too frequent — every cursor-move delta would spam the console).
+Mouse/keyboard/text packets are not logged at all (they'd be far too frequent — every cursor-move delta would spam the file).
 
 ## Publishing a distributable build
 
