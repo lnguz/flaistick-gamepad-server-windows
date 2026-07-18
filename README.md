@@ -25,7 +25,7 @@ flaistick-gamepad-server-windows/
   PacketParser.cs             Applies a 12-byte state packet to a virtual controller
   ReorderPacket.cs             Parses the player-reorder command
   ControllerHub.cs            Owns the ViGEmClient + per-device virtual controllers
-  StartupRegistration.cs       HKCU Run-key registration helper
+  StartupRegistration.cs       Scheduled Task (ONLOGON) registration helper
   installer.iss               Inno Setup script for the distributable installer
 ```
 
@@ -36,9 +36,9 @@ flaistick-gamepad-server-windows/
    - Copy the app to `Program Files`
    - Add a Start Menu shortcut (and uninstaller)
    - Create the Windows Firewall inbound rules for UDP port 9000 (gamepad data) and 47998 (LAN discovery)
-   - Warn you if ViGEmBus isn't detected, with the install command/link
-   - Launch the app once, which registers itself to auto-start on login (`HKCU\...\Run`) and shows a tray icon
-3. If warned about ViGEmBus, install it (`winget install ViGEm.ViGEmBus`) and relaunch the app from the Start Menu shortcut or tray.
+   - Install the ViGEmBus driver automatically (via `winget install ViGEm.ViGEmBus`) if it isn't already present, and warn you with manual install instructions if that fails
+   - Launch the app once, which registers itself to auto-start on login (a Scheduled Task with an `ONLOGON` trigger) and shows a tray icon
+3. If warned that ViGEmBus couldn't be installed automatically, install it manually (`winget install ViGEm.ViGEmBus`) and relaunch the app from the Start Menu shortcut or tray.
 
 The app runs as a normal desktop (Win32) tray application — Windows' Game Mode / Xbox Game Bar does not suspend or close background Win32 apps the way it can with UWP/Store apps, so it keeps running while you game. Its process priority is also bumped to `AboveNormal` at startup so it isn't starved of CPU time.
 
@@ -104,8 +104,8 @@ Output: `dist\FlaiStickGamepadServerSetup.exe` — copy this single file to any 
 - `ControllerHub` maintains one `IXbox360Controller` per Android device ID, created lazily on first packet and disposed automatically if no packet arrives for **3 seconds** (a background sweep runs every 2 seconds). The Android client sends a heartbeat every 200 ms specifically to avoid tripping this timeout during normal play.
 - `PacketParser` maps the 12-byte packet directly onto `IXbox360Controller` button/axis/slider state using the standard XInput button bitmask.
 - Player reordering is best-effort: ViGEmBus has no API to directly assign an XInput player slot, so `ControllerHub.ReorderAsync` disconnects the requested controllers and reconnects them in the desired sequence (with a short delay between each), relying on Windows assigning slots in connection order.
-- `StartupRegistration` writes an `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` entry on every launch so the app starts silently on next login.
-- `installer.iss` bundles the published exe, creates the firewall rule, warns about a missing ViGEmBus driver, and cleans up the firewall rule + Run key entry on uninstall.
+- `StartupRegistration` creates (or refreshes) a per-user Scheduled Task with an `ONLOGON` trigger on every launch, so the app starts silently on next login — this is handled by the Task Scheduler service directly and, unlike the classic `HKCU\...\Run` key (which is only processed by `explorer.exe`), still fires even when Windows boots straight into an alternate shell such as the Xbox full-screen experience used on handheld gaming PCs. It also cleans up any leftover `Run` key entry from older versions of this app.
+- `installer.iss` bundles the published exe, creates the firewall rule, installs the ViGEmBus driver via winget if missing (warning with manual instructions if that fails), and cleans up the firewall rule + scheduled task on uninstall.
 
 ## Wire protocol
 
