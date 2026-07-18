@@ -11,7 +11,7 @@ sealed class UdpServer(int port, ControllerHub hub)
         socket.Bind(new IPEndPoint(IPAddress.Any, port));
         Console.WriteLine($"Listening for gamepad packets on UDP port {port}...");
 
-        var buffer = new byte[18];
+        var buffer = new byte[260];
         EndPoint remoteEp = new IPEndPoint(IPAddress.Any, 0);
         var packetCount = 0L;
 
@@ -44,6 +44,10 @@ sealed class UdpServer(int port, ControllerHub hub)
                 var order = ReorderPacket.ParseDeviceOrder(buffer, len);
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] player order requested: [{string.Join(", ", order)}]");
                 await hub.ReorderAsync(order);
+            }
+            else
+            {
+                RemoteInputPacket.TryHandle(buffer.AsSpan(0, len));
             }
         }
     }

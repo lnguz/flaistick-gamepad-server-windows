@@ -17,13 +17,14 @@ A background .NET 8 tray application that receives gamepad input streamed over U
 
 ```
 flaistick-gamepad-server-windows/
-  Program.cs               Entry point: process priority, ViGEmBus check, tray + server wiring
+  Program.cs               Entry point: process priority, ViGEmBus init, tray + server wiring
   TrayApp.cs                 System tray icon (NotifyIcon) + Exit menu
-  VigemCheck.cs               Checks whether the ViGEmBus driver is installed
-  UdpServer.cs               UDP receive loop, routes packets by length
+  UdpServer.cs               UDP receive loop, routes packets by opcode/length
   DiscoveryServer.cs           Answers LAN broadcast/unicast discovery requests, reports hostname + MAC
   PacketParser.cs             Applies a 12-byte state packet to a virtual controller
   ReorderPacket.cs             Parses the player-reorder command
+  RemoteInput.cs               SendInput (Win32) wrapper: mouse move/click/scroll, keyboard, Unicode text
+  RemoteInputPacket.cs          Parses mouse/keyboard/text packets and calls RemoteInput
   ControllerHub.cs            Owns the ViGEmClient + per-device virtual controllers
   StartupRegistration.cs       Scheduled Task (ONLOGON) registration helper
   installer.iss               Inno Setup script for the distributable installer
@@ -57,7 +58,7 @@ When run from an existing terminal with `dotnet run`, diagnostic lines are print
 - when a virtual controller connects or times out,
 - when a player-reorder request is processed.
 
-There is no other logging — this is intentional, since the shipped behavior is a silent background tray app.
+There is no other logging — this is intentional, since the shipped behavior is a silent background tray app. In particular, mouse/keyboard/text packets are not logged at all (they'd be far too frequent — every cursor-move delta would spam the console).
 
 ## Publishing a distributable build
 
@@ -98,9 +99,10 @@ Output: `dist\FlaiStickGamepadServerSetup.exe` — copy this single file to any 
 
 ## How it works
 
-- `Program.cs` raises its own process priority, checks for ViGEmBus, starts the UDP server and the discovery server on background tasks, and runs a Windows Forms message loop (`Application.Run`) on the main (STA) thread purely to host the tray icon — there is no visible window.
+- `Program.cs` raises its own process priority, initializes `ControllerHub` (which constructs the `ViGEmClient`) inside a try/catch — if that throws (ViGEmBus missing or not loaded), a clear error dialog is shown and the app exits instead of failing silently — then starts the UDP server and the discovery server on background tasks, and runs a Windows Forms message loop (`Application.Run`) on the main (STA) thread purely to host the tray icon — there is no visible window.
 - `DiscoveryServer` listens on a dedicated UDP port (`47998`) for a 4-byte request (sent as either a broadcast scan or a direct unicast "are you awake" ping from the app), and replies directly to the sender with the PC's hostname, the gamepad-data port, and the MAC address of its active network adapter — the phone caches all of it, so it never needs a manually-typed IP and can send a Wake-on-LAN packet later if this PC stops responding.
-- `UdpServer` binds a single UDP socket and distinguishes packet types purely by length: an exact **12 bytes** is a gamepad state update, while `2 + 4×N` bytes (starting with opcode `0xAA`) is a player-reorder command listing `N` device IDs.
+- `UdpServer` binds a single UDP socket and routes every packet on the game port: an exact **12 bytes** is a gamepad state update; `2 + 4×N` bytes starting with opcode `0xAA` is a player-reorder command; anything else is handed to `RemoteInputPacket`, which checks the first byte against its own opcode set (`0xAB`–`0xB0`) for mouse/keyboard/text packets.
+- `RemoteInputPacket` parses mouse move/button/scroll, single key events, key combos, and Unicode text packets, calling into `RemoteInput`, a thin `user32.dll` `SendInput` P/Invoke wrapper — no driver needed for this part (unlike the gamepad side), since Windows accepts synthetic mouse/keyboard input from any normal process. Text is injected with `KEYEVENTF_UNICODE`, so it works regardless of the PC's keyboard layout; key combos are pressed in order and released in reverse order.
 - `ControllerHub` maintains one `IXbox360Controller` per Android device ID, created lazily on first packet and disposed automatically if no packet arrives for **3 seconds** (a background sweep runs every 2 seconds). The Android client sends a heartbeat every 200 ms specifically to avoid tripping this timeout during normal play.
 - `PacketParser` maps the 12-byte packet directly onto `IXbox360Controller` button/axis/slider state using the standard XInput button bitmask.
 - Player reordering is best-effort: ViGEmBus has no API to directly assign an XInput player slot, so `ControllerHub.ReorderAsync` disconnects the requested controllers and reconnects them in the desired sequence (with a short delay between each), relying on Windows assigning slots in connection order.
@@ -126,5 +128,6 @@ The app can send a Wake-on-LAN magic packet to wake this PC if it doesn't respon
 - **Controller shows in the app but nothing happens in Windows**: check the firewall rule for port 9000 and that the phone actually selected the right PC from the list.
 - **Controller connects then disappears after a few seconds**: this means packets stopped arriving — check Wi-Fi stability; the 200 ms client heartbeat should otherwise prevent this during normal use.
 - **Wake-on-LAN doesn't wake the PC**: verify the adapter/BIOS settings above, and prefer a wired connection — this is a hardware/driver limitation, not something the app can work around.
-- **ViGEmBus warning on startup**: install it with `winget install ViGEm.ViGEmBus`, then relaunch the app.
+- **ViGEmBus warning on startup**: install it with `winget install ViGEm.ViGEmBus`, restart the PC, then relaunch the app.
+- **Mouse/keyboard from the app does nothing on the PC**: this shares the same UDP port and firewall rule as the gamepad data (port 9000), so if the controller works but the mouse/keyboard doesn't, it's likely the target window is running elevated (as Administrator) while the server isn't — see the known limitation about UIPI in the [flaistick-app README](../flaistick-app/README.md#known-limitations).
 - **File lock errors when rebuilding (`R.jar`/`app/build` in use)**: this is a Kotlin/Gradle language-server issue on the Android side, not this project — see the note in the Android client's build if you hit it there. On this project, stop any lingering `dotnet`/`GamepadServer` processes before rebuilding if `bin`/`obj` are locked.
