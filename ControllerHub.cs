@@ -10,6 +10,9 @@ sealed class ControllerHub : IDisposable
     private readonly ConcurrentDictionary<int, (IXbox360Controller Pad, long LastSeen)> _pads = new();
     private readonly System.Threading.Timer _sweeper;
 
+    /// Fired whenever a game sets rumble/force-feedback on a virtual pad: (deviceId, largeMotor, smallMotor).
+    public event Action<int, byte, byte>? RumbleReceived;
+
     public ControllerHub()
     {
         _sweeper = new System.Threading.Timer(_ => Sweep(), null, 2000, 2000);
@@ -22,6 +25,7 @@ sealed class ControllerHub : IDisposable
             _ =>
             {
                 var pad = _client.CreateXbox360Controller();
+                pad.FeedbackReceived += (_, e) => RumbleReceived?.Invoke(deviceId, e.LargeMotor, e.SmallMotor);
                 pad.Connect();
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] virtual Xbox 360 controller connected for device {deviceId}");
                 return (pad, now);

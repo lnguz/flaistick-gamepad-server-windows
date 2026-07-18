@@ -25,7 +25,8 @@ flaistick-gamepad-server-windows/
   ReorderPacket.cs             Parses the player-reorder command
   RemoteInput.cs               SendInput (Win32) wrapper: mouse move/click/scroll, keyboard, Unicode text
   RemoteInputPacket.cs          Parses mouse/keyboard/text packets and calls RemoteInput
-  ControllerHub.cs            Owns the ViGEmClient + per-device virtual controllers
+  RumblePacket.cs               Builds the rumble packet sent back to the phone (server -> phone)
+  ControllerHub.cs            Owns the ViGEmClient + per-device virtual controllers, forwards rumble feedback
   StartupRegistration.cs       Scheduled Task (ONLOGON) registration helper
   installer.iss               Inno Setup script for the distributable installer
 ```
@@ -104,6 +105,7 @@ Output: `dist\FlaiStickGamepadServerSetup.exe` — copy this single file to any 
 - `UdpServer` binds a single UDP socket and routes every packet on the game port: an exact **12 bytes** is a gamepad state update; `2 + 4×N` bytes starting with opcode `0xAA` is a player-reorder command; anything else is handed to `RemoteInputPacket`, which checks the first byte against its own opcode set (`0xAB`–`0xB0`) for mouse/keyboard/text packets.
 - `RemoteInputPacket` parses mouse move/button/scroll, single key events, key combos, and Unicode text packets, calling into `RemoteInput`, a thin `user32.dll` `SendInput` P/Invoke wrapper — no driver needed for this part (unlike the gamepad side), since Windows accepts synthetic mouse/keyboard input from any normal process. Text is injected with `KEYEVENTF_UNICODE`, so it works regardless of the PC's keyboard layout; key combos are pressed in order and released in reverse order.
 - `ControllerHub` maintains one `IXbox360Controller` per Android device ID, created lazily on first packet and disposed automatically if no packet arrives for **3 seconds** (a background sweep runs every 2 seconds). The Android client sends a heartbeat every 200 ms specifically to avoid tripping this timeout during normal play.
+- Rumble is bidirectional: `ControllerHub` subscribes to each virtual controller's `FeedbackReceived` event (fired by ViGEmBus whenever a game sets force-feedback) and raises its own `RumbleReceived` event with `(deviceId, largeMotor, smallMotor)`. `UdpServer` remembers the endpoint of the last packet it received from the phone and, on `RumbleReceived`, sends a `0xB2` packet back to that address — the only packet in this protocol that flows server -> phone. The phone then vibrates the matching physical gamepad, if its hardware supports it.
 - `PacketParser` maps the 12-byte packet directly onto `IXbox360Controller` button/axis/slider state using the standard XInput button bitmask.
 - Player reordering is best-effort: ViGEmBus has no API to directly assign an XInput player slot, so `ControllerHub.ReorderAsync` disconnects the requested controllers and reconnects them in the desired sequence (with a short delay between each), relying on Windows assigning slots in connection order.
 - `StartupRegistration` creates (or refreshes) a per-user Scheduled Task with an `ONLOGON` trigger on every launch, so the app starts silently on next login — this is handled by the Task Scheduler service directly and, unlike the classic `HKCU\...\Run` key (which is only processed by `explorer.exe`), still fires even when Windows boots straight into an alternate shell such as the Xbox full-screen experience used on handheld gaming PCs. It also cleans up any leftover `Run` key entry from older versions of this app.
